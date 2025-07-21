@@ -72,7 +72,7 @@
             border-radius: 0.375rem;
             font-size: 1rem;
             color: #f5f5f5;
-            background-color: #0a0a0a;
+            background-color: #1f2937; /* Gray 800 */
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
         #notification-toast {
@@ -285,17 +285,17 @@
     <section id="checkout-section" class="hidden container mx-auto p-4 md:p-8">
          <div class="contract-card p-4 sm:p-8 max-w-2xl mx-auto">
              <header class="text-center mb-8">
-                <h1 class="text-3xl md:text-4xl font-bold gradient-text">Finalizar Pagamento</h1>
-                <p id="checkout-summary" class="text-gray-400 mt-2">Plano selecionado: <span class="font-bold text-indigo-400"></span></p>
-            </header>
-            <div class="flex justify-center">
-                <div id="pix-container" class="p-6 rounded-lg bg-black text-center w-full md:w-2/3">
-                    <!-- PIX content will be populated by JS -->
-                </div>
-            </div>
-            <div class="text-center mt-8">
+                 <h1 class="text-3xl md:text-4xl font-bold gradient-text">Finalizar Pagamento</h1>
+                 <p id="checkout-summary" class="text-gray-400 mt-2">Plano selecionado: <span class="font-bold text-indigo-400"></span></p>
+             </header>
+             <div class="flex justify-center">
+                 <div id="pix-container" class="p-6 rounded-lg bg-black text-center w-full md:w-2/3">
+                     <!-- PIX content will be populated by JS -->
+                 </div>
+             </div>
+             <div class="text-center mt-8">
                  <button id="back-to-proposal-btn" class="text-indigo-400 hover:text-indigo-300">&larr; Voltar para os Planos</button>
-            </div>
+             </div>
          </div>
     </section>
 
@@ -311,7 +311,7 @@
     <script type="module">
         // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         let db, auth, userId;
@@ -362,25 +362,46 @@
 
         async function initializeFirebase() {
             try {
-                const firebaseConfig = {
-                  apiKey: "AIzaSyAZmxW3HBCmvXeUR8cmszIWXmUM-2-9ueo",
-                  authDomain: "contrato-839eb.firebaseapp.com",
-                  projectId: "contrato-839eb",
-                  storageBucket: "contrato-839eb.firebasestorage.app",
-                  messagingSenderId: "257509711471",
-                  appId: "1:257509711471:web:bcd069639d845fd88db79a",
-                  measurementId: "G-YGDLSEV3H4"
-                };
+                // Use environment-provided config, with a fallback for local testing
+                const firebaseConfig = typeof __firebase_config !== 'undefined'
+                    ? JSON.parse(__firebase_config)
+                    : {
+                        apiKey: "YOUR_API_KEY", // Replace with your actual config for local testing
+                        authDomain: "contrato-839eb.firebaseapp.com",
+                        projectId: "contrato-839eb",
+                        storageBucket: "contrato-839eb.appspot.com",
+                        messagingSenderId: "257509711471",
+                        appId: "1:257509711471:web:bcd069639d845fd88db79a"
+                    };
+
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
+
+                // Listen for auth state changes to get the user ID
                 onAuthStateChanged(auth, user => {
-                    if (user) userId = user.uid;
+                    if (user) {
+                        userId = user.uid;
+                        console.log("Authenticated with UID:", userId);
+                    } else {
+                        userId = null;
+                        console.log("User is signed out.");
+                    }
                 });
-                await signInAnonymously(auth);
+
+                // Sign in using the provided token or fall back to anonymous
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
             } catch (error) {
                 console.error("Firebase initialization failed:", error);
-                showNotification("Erro ao conectar com o sistema de contratos.", "error");
+                if (error.code === 'auth/operation-not-allowed') {
+                    showNotification("Erro de Configuração: Login anônimo não está habilitado no seu painel do Firebase. Vá para Authentication > Sign-in method e ative 'Anônimo'.", "error", 10000);
+                } else {
+                    showNotification("Erro ao conectar com o sistema de contratos.", "error");
+                }
             }
         }
 
@@ -496,7 +517,7 @@
             const margins = { top: 25, bottom: 20, left: 25, right: 25 };
             const usableWidth = doc.internal.pageSize.width - margins.left - margins.right;
             let y = margins.top;
-            const lineSpacing = 7; // Adjusted for better readability
+            const lineSpacing = 7;
 
             const checkPageBreak = (neededHeight = 20) => {
                 if (y + neededHeight > doc.internal.pageSize.height - margins.bottom) {
@@ -606,10 +627,18 @@
 
             try {
                 showNotification("Gerando PDF do contrato...", "info");
-                const pdfDataUri = await generateContractPDF(currentClientData, signatureDataURL);
+                await generateContractPDF(currentClientData, signatureDataURL);
                 
                 showNotification("Salvando contrato no sistema...", "info");
+                
+                if (!userId) {
+                    throw new Error("Autenticação do usuário não encontrada. A página será recarregada.");
+                }
+                
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
                 const docId = currentClientData.cnpj.replace(/\D/g, '') + '_' + Date.now();
+                const contractPath = `artifacts/${appId}/users/${userId}/contracts`;
+                
                 const contractData = {
                     ...currentClientData,
                     planName: selectedPlan.name,
@@ -617,7 +646,8 @@
                     signedAt: new Date().toISOString(),
                     signature: signatureDataURL
                 };
-                await setDoc(doc(db, "contracts", docId), contractData);
+                
+                await setDoc(doc(db, contractPath, docId), contractData);
                 
                 showNotification("Contrato salvo! Redirecionando para pagamento...", "success");
                 
@@ -627,7 +657,10 @@
 
             } catch (error) {
                 console.error("Erro ao finalizar contrato:", error);
-                showNotification(`Erro: ${error.message}`, "error");
+                showNotification(`Erro: ${error.message}`, "error", 6000);
+                if (error.message.includes("Autenticação")) {
+                    setTimeout(() => window.location.reload(), 6000);
+                }
             } finally {
                 button.disabled = false;
                 document.getElementById('btn-text').classList.remove('hidden');
@@ -669,7 +702,7 @@
                             </label>
                             <div class="flex items-center">
                                 <input type="text" id="pix-key-input" 
-                                       class="bg-black text-gray-400 text-xs p-3 rounded-l-md w-full border border-gray-700" 
+                                       class="bg-gray-800 text-gray-400 text-xs p-3 rounded-l-md w-full border border-gray-700" 
                                        value="${pixKey}" readonly>
                                 <button id="copy-pix-key-btn" 
                                         class="bg-indigo-600 text-white p-3 rounded-r-md hover:bg-indigo-700" 
@@ -691,11 +724,18 @@
                 `;
                 
                 const copyButton = document.getElementById('copy-pix-key-btn');
-                if (copyButton) {
+                const pixInput = document.getElementById('pix-key-input');
+                if (copyButton && pixInput) {
                     copyButton.addEventListener('click', () => {
-                        navigator.clipboard.writeText(pixKey)
-                            .then(() => showNotification("Chave PIX copiada!", "success"))
-                            .catch(() => showNotification("Erro ao copiar.", "error"));
+                        pixInput.select();
+                        pixInput.setSelectionRange(0, 99999); // For mobile devices
+                        try {
+                            document.execCommand('copy');
+                            showNotification("Chave PIX copiada!", "success");
+                        } catch (err) {
+                            showNotification("Erro ao copiar. Por favor, copie manualmente.", "error");
+                        }
+                        window.getSelection().removeAllRanges();
                     });
                 }
             }
@@ -713,6 +753,7 @@
             document.getElementById('back-to-proposal-btn').addEventListener('click', () => {
                 checkoutSection.classList.add('hidden');
                 mainContent.classList.remove('hidden');
+                window.scrollTo({ top: document.getElementById('pricing').offsetTop, behavior: 'smooth' });
             });
         });
     </script>
